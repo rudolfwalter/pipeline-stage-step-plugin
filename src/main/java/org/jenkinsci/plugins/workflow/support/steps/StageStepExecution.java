@@ -1,6 +1,5 @@
 package org.jenkinsci.plugins.workflow.support.steps;
 
-import com.google.inject.Inject;
 import hudson.AbortException;
 import hudson.Extension;
 import hudson.XmlFile;
@@ -34,21 +33,25 @@ import org.jenkinsci.plugins.workflow.flow.FlowExecutionOwner;
 import org.jenkinsci.plugins.workflow.graph.BlockEndNode;
 import org.jenkinsci.plugins.workflow.graph.FlowNode;
 import org.jenkinsci.plugins.workflow.graph.FlowStartNode;
-import org.jenkinsci.plugins.workflow.steps.AbstractStepExecutionImpl;
 import org.jenkinsci.plugins.workflow.steps.BodyExecutionCallback;
 import org.jenkinsci.plugins.workflow.steps.EnvironmentExpander;
 import org.jenkinsci.plugins.workflow.steps.FlowInterruptedException;
 import org.jenkinsci.plugins.workflow.steps.StepContext;
-import org.jenkinsci.plugins.workflow.steps.StepContextParameter;
+import org.jenkinsci.plugins.workflow.steps.StepExecution;
 import org.jenkinsci.plugins.workflow.support.steps.stage.Messages;
 
-public class StageStepExecution extends AbstractStepExecutionImpl {
+public class StageStepExecution extends StepExecution {
     private static final Logger LOGGER = Logger.getLogger(StageStepExecution.class.getName());
 
     // only used during the start() call, so no need to be persisted
-    @Inject(optional=true) private transient StageStep step;
-    @StepContextParameter private transient Run<?,?> run;
-    @StepContextParameter private transient FlowNode node;
+    private transient String name;
+    private transient Integer concurrency;
+
+    public StageStepExecution(StepContext context, String name, Integer concurrency) {
+        super(context);
+        this.name = name;
+        this.concurrency = concurrency;
+    }
 
     private static final class StageActionImpl extends InvisibleAction implements StageAction {
         private final String stageName;
@@ -62,8 +65,10 @@ public class StageStepExecution extends AbstractStepExecutionImpl {
 
     @Override
     public boolean start() throws Exception {
+        Run<?,?> run = getContext().get(Run.class);
+        FlowNode node = getContext().get(FlowNode.class);
         if (getContext().hasBody()) { // recommended mode
-            if (step.concurrency != null) {
+            if (concurrency != null) {
                 throw new AbortException(Messages.StageStepExecution_concurrency_not_supported_in_block_mode());
             }
             getContext().newBodyInvoker()
@@ -71,9 +76,9 @@ public class StageStepExecution extends AbstractStepExecutionImpl {
                             // NOTE: Other plugins should not be pulling from the environment to determine stage name.
                             // Use FlowNode.getEnclosingBlocks to get a list of enclosing blocks, innermost first, and
                             // look for the stage there.
-                            EnvironmentExpander.constant(Collections.singletonMap("STAGE_NAME", step.name))))
+                            EnvironmentExpander.constant(Collections.singletonMap("STAGE_NAME", name))))
                     .withCallback(BodyExecutionCallback.wrap(getContext()))
-                    .withDisplayName(step.name)
+                    .withDisplayName(name)
                     .start();
             return false;
         }
@@ -81,9 +86,9 @@ public class StageStepExecution extends AbstractStepExecutionImpl {
         if (isInsideParallel(node)) {
             throw new AbortException(Messages.StageStepExecution_the_stage_step_must_not_be_used_inside_a());
         }
-        node.addAction(new LabelAction(step.name));
-        node.addAction(new StageActionImpl(step.name));
-        enter(run, getContext(), step.name, step.concurrency);
+        node.addAction(new LabelAction(name));
+        node.addAction(new StageActionImpl(name));
+        enter(run, getContext(), name, concurrency);
         return false; // execute asynchronously
     }
 
